@@ -1,0 +1,72 @@
+name: QA ExperIA
+run-name: QA ExperIA ${{ github.sha }}
+on:
+  workflow_dispatch:
+    inputs:
+      root:
+        required: false
+        default: '.'
+      config:
+        required: true
+        default: 'playwright.config.ts'
+      manager:
+        required: true
+        default: 'npm'
+permissions:
+  contents: read
+concurrency:
+  group: qaex-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install and run the exact repository snapshot
+        env:
+          QAEX_ROOT: ${{ inputs.root }}
+          QAEX_CONFIG: ${{ inputs.config }}
+          QAEX_MANAGER: ${{ inputs.manager }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$QAEX_ROOT" in /*|*..*|*\\*) exit 2;; esac
+          cd "$QAEX_ROOT"
+          case "$QAEX_MANAGER" in
+            npm) if [ -f package-lock.json ]; then npm ci; else npm install; fi ;;
+            pnpm) corepack enable; pnpm install --frozen-lockfile ;;
+            yarn) corepack enable; yarn install --immutable ;;
+            *) exit 2 ;;
+          esac
+          node -e 'const p=require("./package.json"),cp=require("child_process");for(const name of ["typecheck","lint"]){if(p.scripts?.[name]){const r=cp.spawnSync(process.env.QAEX_MANAGER,["run",name],{stdio:"inherit"});if(r.status!==0)process.exit(r.status||1)}}'
+          if grep -rq "page\.goto\|from '@playwright/test'.*Page" "$QAEX_ROOT" 2>/dev/null; then
+            npx --no-install playwright install --with-deps
+          fi
+          mkdir -p qaex-artifacts
+          node -e 'const fs=require("fs"),p=require("path"),c=require("crypto");const m=JSON.parse(fs.readFileSync(p.join(process.env.GITHUB_WORKSPACE,".qaex-manifest.json"),"utf8"));for(const [f,h] of Object.entries(m)){if(c.createHash("sha256").update(fs.readFileSync(p.join(process.env.GITHUB_WORKSPACE,f))).digest("hex")!==h)throw Error("Snapshot changed: "+f)}'
+          npx --no-install playwright test --config="$QAEX_CONFIG" --reporter=json > qaex-artifacts/results.json
+      - name: Require actual tests without failures or skips
+        env:
+          QAEX_ROOT: ${{ inputs.root }}
+        run: |
+          node -e 'const fs=require("fs"),p=require("path"),c=require("crypto");const m=JSON.parse(fs.readFileSync(p.join(process.env.GITHUB_WORKSPACE,".qaex-manifest.json"),"utf8"));for(const [f,h] of Object.entries(m)){if(c.createHash("sha256").update(fs.readFileSync(p.join(process.env.GITHUB_WORKSPACE,f))).digest("hex")!==h)throw Error("Snapshot changed: "+f)}'
+          node -e 'const fs=require("fs"),p=require("path");const s=JSON.parse(fs.readFileSync(p.join(process.env.QAEX_ROOT,"qaex-artifacts/results.json"),"utf8")).stats;if(!s||s.expected<1||s.unexpected||s.skipped||s.flaky)process.exit(1)'
+      - name: Upload execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qaex-evidence
+          path: |
+            ${{ inputs.root }}/package-lock.json
+            ${{ inputs.root }}/pnpm-lock.yaml
+            ${{ inputs.root }}/yarn.lock
+            ${{ inputs.root }}/qaex-artifacts/
+            ${{ inputs.root }}/test-results/
+            ${{ inputs.root }}/playwright-report/
+          if-no-files-found: error

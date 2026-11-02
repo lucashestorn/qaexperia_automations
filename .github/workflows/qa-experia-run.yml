@@ -45,7 +45,7 @@ jobs:
             *) exit 2 ;;
           esac
           node -e 'const p=require("./package.json"),cp=require("child_process");for(const name of ["typecheck","lint"]){if(p.scripts?.[name]){const r=cp.spawnSync(process.env.QAEX_MANAGER,["run",name],{stdio:"inherit"});if(r.status!==0)process.exit(r.status||1)}}'
-          if grep -rq "page\.goto\|from '@playwright/test'.*Page" "$QAEX_ROOT" 2>/dev/null; then
+          if grep -rq "\bpage\b" "$QAEX_ROOT" 2>/dev/null; then
             npx --no-install playwright install --with-deps
           fi
           mkdir -p qaex-artifacts

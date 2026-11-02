@@ -71,8 +71,8 @@ jobs:
           phase=validation
           node -e 'const p=require("./package.json"),cp=require("child_process");for(const name of ["typecheck","lint"]){if(p.scripts?.[name]){const r=cp.spawnSync(process.env.QAEX_MANAGER,["run",name],{stdio:"inherit"});if(r.status!==0)process.exit(r.status||1)}}'
           phase=browsers
-          if grep -rq "\bpage\b" "$QAEX_ROOT" 2>/dev/null; then
-            npx --no-install playwright install --with-deps
+          if grep -rq --exclude-dir=node_modules "\bpage\b" "$QAEX_ROOT" 2>/dev/null; then
+            npx --no-install playwright install chromium
           else
             echo "Skipping playwright browser binaries install: pure API test"
           fi
